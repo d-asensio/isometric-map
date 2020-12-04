@@ -65,7 +65,7 @@
     /** App **/
     const IsoMap2D = (function IIFE() {
       // Constants
-      const _BLOCK_SIZE = 100
+      const _BLOCK_SIZE = 50
 
       const _COLOR_RED   = new Isomer.Color(160, 60, 50)
       const _COLOR_GREEN = new Isomer.Color(50, 160, 60)
@@ -83,11 +83,14 @@
       let _isomer = null
 
       let _isUserPressingCmdKey = false
+      let _showDebugBox = false
+
+      let _characterImage = null
 
       const _bbox = {
-        xSize: 16,
-        ySize: 16,
-        zSize: 16
+        xSize: 32,
+        ySize: 32,
+        zSize: 32
       }
 
       const _userPosition = {
@@ -108,6 +111,14 @@
         _initIsomer()
 
         _initRenderLoop()
+
+        const characterImage = new Image();
+
+        characterImage.onload = function _handleImageLoad () {
+          _characterImage = characterImage
+        };
+
+        characterImage.src="./character.png";
       }
 
       function _getCanvasContext() {
@@ -156,11 +167,14 @@
             _handleArrowLeft()
             break
           case 'Space':
-            _saveBlockInUserPosition()
+            _handleSpaceBar()
             break
           case 'MetaLeft':
           case 'MetaRight':
             _setUserPressingCmdKey(true)
+            break
+          case 'KeyD':
+            _toggleDebugBox()
             break
         }
       }
@@ -198,6 +212,26 @@
         _setUserPosition({ x: _userPosition.x - 1 })
       }
 
+      function _handleSpaceBar () {
+        const blockInUserPosition = _findBlockByCoordinates(_userPosition)
+
+        if (blockInUserPosition === undefined) {
+          _saveBlockInUserPosition()
+        } else {
+          _deleteBlockInUserPosition()
+        }
+      }
+
+      function _findBlockByCoordinates (blockCoordinates) {
+        return _savedBlocks.find(
+          itBlock => _isSameBlockComparator(itBlock, blockCoordinates)
+        )
+      }
+
+      function _toggleDebugBox () {
+        _showDebugBox = !_showDebugBox
+      }
+
       function _setUserPosition ({
         x = _userPosition.x,
         y = _userPosition.y,
@@ -217,13 +251,27 @@
         _savedBlocks = allBlocks.sort(_closestToCameraComparator)
       }
 
+      function _deleteBlockInUserPosition () {
+        _savedBlocks = _savedBlocks.filter(
+          itBlock => !_isSameBlockComparator(itBlock, _userPosition)
+        )
+      }
+
       function _closestToCameraComparator (a, b) {
-          return (
-            b.x - a.x ||
-            b.y - a.y ||
-            a.z - b.z
-          )
-        }
+        return (
+          b.x - a.x ||
+          b.y - a.y ||
+          a.z - b.z
+        )
+      }
+
+      function  _isSameBlockComparator (a, b) {
+        return (
+          a.x === b.x &&
+          a.y === b.y &&
+          a.z === b.z
+        )
+      }
 
       function _minmax (number, minNumber, maxNumber) {
         const { max, min } = Math
@@ -263,7 +311,7 @@
         _renderBackground()
 
 
-        _renderDebugBBox ()
+        if (_showDebugBox) _renderDebugBBox ()
 
         // _renderBlockPlane({
         //   hOffset: 0,
@@ -275,6 +323,16 @@
 
         _renderBlock(_userPosition)
         _renderSavedBlocks()
+
+        if(_characterImage !== null) {
+          _ctx.drawImage(
+            _characterImage,
+            _userPosition.x * _BLOCK_SIZE,
+            _userPosition.y * _BLOCK_SIZE,
+            _characterImage.width,
+            _characterImage.height
+          );
+        }
       }
 
       function _renderBackground() {
