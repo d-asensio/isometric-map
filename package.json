@@ -1,0 +1,13 @@
+{
+  "name": "2d-map",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "serve dist"
+  },
+  "devDependencies": {
+    "serve": "^11.3.2"
+  },
+  "dependencies": {}
+}

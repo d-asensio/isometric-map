@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Isometric Map</title>
+
+  <script src="http://jdan.github.io/isomer/js/isomer.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    *::before {
+      box-sizing: border-box;
+    }
+
+    *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #canvas {
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script type="application/javascript">
+    // #region HELPERS
+
+    function $(elementId) {
+      return document.getElementById(elementId)
+    }
+
+    function ready(fn) {
+      if (document.readyState != 'loading'){
+        fn()
+      } else {
+        document.addEventListener('DOMContentLoaded', fn)
+      }
+    }
+
+    function onWindowResize(fn) {
+      window.addEventListener('resize', fn)
+    }
+
+    function onKeyDown(fn) {
+      document.addEventListener('keydown', fn)
+    }
+
+    function onKeyUp(fn) {
+      document.addEventListener('keyup', fn)
+    }
+
+    // #endregion
+
+    /** App **/
+    const IsoMap2D = (function IIFE() {
+      // Constants
+      const _BLOCK_SIZE = 100
+
+      const _COLOR_RED   = new Isomer.Color(160, 60, 50)
+      const _COLOR_GREEN = new Isomer.Color(50, 160, 60)
+      const _COLOR_BLUE  = new Isomer.Color(50, 60, 160)
+
+      const _COLOR_YELLOW = new Isomer.Color(243, 217, 71)
+
+      const _COLOR_WHITE = new Isomer.Color(255, 255, 255)
+      // *********
+
+      let $_canvas = null
+      let _ctx = null
+
+      let _size = null
+      let _isomer = null
+
+      let _isUserPressingCmdKey = false
+
+      const _bbox = {
+        xSize: 16,
+        ySize: 16,
+        zSize: 16
+      }
+
+      const _userPosition = {
+        x: 0,
+        y: 0,
+        z: 0
+      }
+
+      let _savedBlocks = []
+
+      function init($canvas) {
+        $_canvas = $canvas
+
+        _ctx = _getCanvasContext()
+        
+        _updateCanvasSize()
+        _attachEvents()
+        _initIsomer()
+
+        _initRenderLoop()
+      }
+
+      function _getCanvasContext() {
+        return $_canvas.getContext('2d')
+      }
+
+      function _getCanvasSize() {
+        const { width, height } = $_canvas.getBoundingClientRect()
+
+        const resolutionMultiplier = _getScreenResolutionMultiplier()
+
+        return {
+          width: width * resolutionMultiplier,
+          height: height * resolutionMultiplier
+        }
+      }
+
+      function _getScreenResolutionMultiplier () {
+        // TODO Automatically detect, retina for now
+        return 2
+      }
+
+      function _updateCanvasSize () {
+        _size = _getCanvasSize()
+      }
+
+      function _attachEvents () {
+        onWindowResize(_updateCanvasSize)
+
+        onKeyDown(_handleKeyDown)
+        onKeyUp(_handleKeyUp)
+      }
+
+      function _handleKeyDown (event) {
+        switch (event.code) {
+          case 'ArrowUp':
+            _handleArrowUp()
+            break
+          case 'ArrowDown':
+            _handleArrowDown()
+            break
+          case 'ArrowRight':
+            _handleArrowRight()
+            break
+          case 'ArrowLeft':
+            _handleArrowLeft()
+            break
+          case 'Space':
+            _saveBlockInUserPosition()
+            break
+          case 'MetaLeft':
+          case 'MetaRight':
+            _setUserPressingCmdKey(true)
+            break
+        }
+      }
+
+      function _handleKeyUp (event) {
+        switch (event.code) {
+          case 'MetaLeft':
+          case 'MetaRight':
+            _setUserPressingCmdKey(false)
+            break
+        }
+      }
+
+      function _handleArrowUp () {
+        if (_isUserPressingCmdKey) {
+          _setUserPosition({ z: _userPosition.z + 1 })
+        } else {
+          _setUserPosition({ y: _userPosition.y + 1 })
+        }
+      }
+
+      function _handleArrowDown () {
+        if (_isUserPressingCmdKey) {
+          _setUserPosition({ z: _userPosition.z - 1 })
+        } else {
+          _setUserPosition({ y: _userPosition.y - 1 })
+        }
+      }
+
+      function _handleArrowRight () {
+        _setUserPosition({ x: _userPosition.x + 1 })
+      }
+
+      function _handleArrowLeft () {
+        _setUserPosition({ x: _userPosition.x - 1 })
+      }
+
+      function _setUserPosition ({
+        x = _userPosition.x,
+        y = _userPosition.y,
+        z = _userPosition.z
+      }) {
+        _userPosition.x = _minmax(x, 0, _bbox.xSize - 1)
+        _userPosition.y = _minmax(y, 0, _bbox.ySize - 1)
+        _userPosition.z = _minmax(z, 0, _bbox.zSize - 1)
+      }
+
+      function _saveBlockInUserPosition () {
+        const allBlocks = [
+          ..._savedBlocks,
+          { ..._userPosition }
+        ]
+
+        _savedBlocks = allBlocks.sort(_closestToCameraComparator)
+      }
+
+      function _closestToCameraComparator (a, b) {
+          return (
+            b.x - a.x ||
+            b.y - a.y ||
+            a.z - b.z
+          )
+        }
+
+      function _minmax (number, minNumber, maxNumber) {
+        const { max, min } = Math
+        return min(
+          max(number, minNumber),
+          maxNumber
+        )
+      }
+
+      function _setUserPressingCmdKey (isPressing) {
+        _isUserPressingCmdKey = Boolean(isPressing)
+      }
+
+      function _initIsomer (options) {
+        // TODO this is not updated when the canvas is resized
+        _isomer = new Isomer(
+          $_canvas,
+          {
+            scale: 1,
+            originX: _size.width/2,
+            originY: _size.height
+          }
+        )
+      }
+
+      function _initRenderLoop () {
+        (function renderLoop () {
+          _render()
+          requestAnimationFrame(renderLoop)
+        })()
+      }
+
+      function _render() {
+        _isInitializedOrThrow()
+        _syncCanvasSize()
+
+        _renderBackground()
+
+
+        _renderDebugBBox ()
+
+        // _renderBlockPlane({
+        //   hOffset: 0,
+        //   vOffset: 0,
+        //   hBlocks: 5,
+        //   vBlocks: 2,
+        //   planeZ: 0
+        // })
+
+        _renderBlock(_userPosition)
+        _renderSavedBlocks()
+      }
+
+      function _renderBackground() {
+        _ctx.fillStyle = 'black'
+        _ctx.fillRect(0, 0, _size.width, _size.height)
+      }
+
+      function _renderDebugBBox () {
+        // TODO lines !== blocks, rename
+        // Bug this do not print the grid correctly, the size is -1
+
+        const {
+          xSize: xLines,
+          ySize: yLines,
+          zSize: zLines
+        } = _bbox
+
+        // X Plane
+        _renderYZGrid({yLines, zLines, x: xLines - 1,
+          color: _COLOR_BLUE
+        })
+
+        _renderXProjection({
+          x: xLines - 1,
+          y: _userPosition.y,
+          z: _userPosition.z,
+          color: _COLOR_BLUE
+        })
+
+        // Y Plane
+        _renderXZGrid({ xLines, zLines, y: yLines - 1,
+          color: _COLOR_GREEN
+        })
+
+        _renderYProjection({
+          x: _userPosition.x,
+          y: yLines - 1,
+          z: _userPosition.z,
+          color: _COLOR_GREEN
+        })
+
+        // Z Plane
+        _renderXYGrid({ xLines, yLines,
+          color: _COLOR_RED
+        })
+
+        _renderZProjection({
+          x: _userPosition.x,
+          y: _userPosition.y,
+          z: 0,
+          color: _COLOR_RED
+        })
+      }
+
+      // #region Grid
+
+      function _renderXYGrid ({ xLines, yLines, z = 0, color }) {
+        const xzLineLenght = yLines - 1
+        const yzLineLenght = xLines - 1
+
+        for (x = 0 ; x < xLines ; x++) {
+          _renderXZLine({
+            x,
+            z,
+            length: xzLineLenght,
+            color
+          })
+        }
+
+        for (y = 0 ; y < yLines ; y++) {
+          _renderYZLine({
+            y,
+            z,
+            length: yzLineLenght,
+            color
+          })
+        }
+      }
+
+      function _renderXZGrid ({ xLines, zLines, y = 0, color}) {
+        const xyLineLenght = zLines - 1
+        const yzLineLenght = xLines - 1
+
+        for (x = 0 ; x < xLines ; x++) {
+          _renderXYLine({
+            x,
+            y,
+            length: xyLineLenght,
+            color
+          })
+        }
+
+        for (z = 0 ; z < zLines ; z++) {
+          _renderYZLine({
+            y,
+            z,
+            length: yzLineLenght,
+            color
+          })
+        }
+      }
+
+      function _renderYZGrid ({ yLines, zLines, x = 0, color }) {
+        const yxLineLenght = zLines - 1
+        const zxLineLenght = yLines - 1
+
+        for (y = 0 ; y < yLines ; y++) {
+          _renderXYLine({
+            y,
+            x,
+            length: yxLineLenght,
+            color
+          })
+        }
+
+        for (z = 0 ; z < zLines ; z++) {
+          _renderXZLine({
+            z,
+            x,
+            length: zxLineLenght,
+            color
+          })
+        }
+      }
+
+      function _renderXYLine({ x, y, length, color }) {
+        const { Point, Path } = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneY = y * _BLOCK_SIZE
+        const sceneLength = length * _BLOCK_SIZE
+
+        const hLinePath = new Path([
+          new Point(sceneX, sceneY, 0),
+          new Point(sceneX, sceneY, sceneLength),
+          new Point(sceneX, sceneY, 0)
+        ])
+
+        _isomer.add(hLinePath, color)
+      }
+
+      function _renderXZLine({ x, z, length, color }) {
+        const { Point, Path } = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+        const sceneLength = length * _BLOCK_SIZE
+
+        const hLinePath = new Path([
+          new Point(sceneX, 0, sceneZ),
+          new Point(sceneX, sceneLength, sceneZ),
+          new Point(sceneX, 0, sceneZ)
+        ])
+
+          _isomer.add(hLinePath, color)
+      }
+
+      function _renderYZLine({ y, z, length, color }) {
+        const { Point, Path } = Isomer
+        
+        const sceneY = y * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+        const sceneLength = length * _BLOCK_SIZE
+
+        const vLinePath = new Path([
+          new Point(0, sceneY, sceneZ),
+          new Point(sceneLength, sceneY, sceneZ),
+          new Point(0, sceneY, sceneZ)
+        ])
+
+        _isomer.add(vLinePath, color)
+      }
+
+      // #endregion
+
+      // #region Blocks
+
+      function _renderBlockPlane ({ hOffset, vOffset, hBlocks, vBlocks, planeZ }) {
+        for (let x = hBlocks ; x >= 0 ; x--) {
+          for (let y = vBlocks ; y >= 0 ; y--) {
+            _renderBlock({
+              x: x + hOffset,
+              y: y + hOffset,
+              z: planeZ
+            })
+          }
+        }
+      }
+
+      function _renderSavedBlocks () {
+        for (const blockPosition of _savedBlocks ) {
+          _renderBlock({
+            ...blockPosition,
+            color: _COLOR_GREEN
+          })
+        }
+      }
+
+      function _renderBlock ({ x, y, z, color = _COLOR_YELLOW }) {
+        const { Point, Shape } = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneY = y * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+
+        const renderPoint = new Point(
+          sceneX,
+          sceneY,
+          sceneZ
+        )
+          
+        const shape = Shape.Prism(
+          renderPoint,
+          _BLOCK_SIZE,
+          _BLOCK_SIZE,
+          _BLOCK_SIZE
+        )
+
+        _isomer.add(shape, color)
+      }
+
+      function _renderXProjection ({ x, y, z, color}) {
+        const { Point, Shape } = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneY = y * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+
+        const renderPoint = new Point(
+          sceneX,
+          sceneY,
+          sceneZ
+        )
+          
+        const shape = Shape.Prism(
+          renderPoint,
+          1,
+          _BLOCK_SIZE,
+          _BLOCK_SIZE
+        )
+
+        _isomer.add(shape, color)
+      }
+
+      function _renderYProjection ({ x, y, z, color}) {
+        const { Point, Shape } = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneY = y * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+
+        const renderPoint = new Point(
+          sceneX,
+          sceneY,
+          sceneZ
+        )
+          
+        const shape = Shape.Prism(
+          renderPoint,
+          _BLOCK_SIZE,
+          1,
+          _BLOCK_SIZE
+        )
+
+        _isomer.add(shape, color)
+      }
+
+      function _renderZProjection ({ x, y, z, color}) {
+        const { Point, Shape } = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneY = y * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+
+        const renderPoint = new Point(
+          sceneX,
+          sceneY,
+          sceneZ
+        )
+          
+        const shape = Shape.Prism(
+          renderPoint,
+          _BLOCK_SIZE,
+          _BLOCK_SIZE,
+          1
+        )
+
+        _isomer.add(shape, color)
+      }
+
+      // #endregion
+
+      function _renderText(text, x, y) {
+        _ctx.font = "30px Arial"
+        _ctx.fillStyle = "red"
+        _ctx.textAlign = "center"
+        _ctx.fillText(text, x, y)
+      }
+
+      function _isInitializedOrThrow() {
+        if ($_canvas === null) {
+          throw new Error(
+            'The map is not initialized, please call the `initialize` method with a valid HTMLCanvasElement before' +
+            'performing any other operation.'
+          )
+        }
+      }
+
+      function _syncCanvasSize() {
+        const { width, height } = _size
+
+        $_canvas.width = width
+        $_canvas.height = height
+      }
+
+      return {
+        init
+      }
+    })()
+
+    /** Init **/
+    ready(function handleDOMReady () {
+      const $canvas = $('canvas')
+
+      IsoMap2D.init($canvas)
+    })
+  </script>
+</body>
+</html>
