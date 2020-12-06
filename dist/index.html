@@ -74,6 +74,8 @@
       const _COLOR_YELLOW = new Isomer.Color(243, 217, 71)
 
       const _COLOR_WHITE = new Isomer.Color(255, 255, 255)
+
+      const _COLOR_MARBLE = new Isomer.Color(221, 197, 186)
       // *********
 
       let $_canvas = null
@@ -85,7 +87,8 @@
       let _isUserPressingCmdKey = false
       let _showDebugBox = false
 
-      let _characterImage = null
+      let _characterImages = null
+      let _characterDirection = 'down'
 
       const _bbox = {
         xSize: 32,
@@ -101,7 +104,7 @@
 
       let _savedBlocks = []
 
-      function init($canvas) {
+      async function init($canvas) {
         $_canvas = $canvas
 
         _ctx = _getCanvasContext()
@@ -110,15 +113,51 @@
         _attachEvents()
         _initIsomer()
 
+        await _loadCharacterImages()
+
         _initRenderLoop()
+      }
 
-        const characterImage = new Image();
+      async function _loadImage (imageUrl) {
+        const image = new Image()
+        image.src = imageUrl
 
-        characterImage.onload = function _handleImageLoad () {
-          _characterImage = characterImage
-        };
+        const loadImagePromise = new Promise(resolve => {
+          image.onload = resolve
+        })
 
-        characterImage.src="./character.png";
+        await loadImagePromise
+
+        return image
+      }
+
+      async function _loadCharacterImages () {
+        const imagesLoadPromise = Promise.all([
+          _loadImage('./character/up.png'),
+          _loadImage('./character/up_diagonal.png'),
+          _loadImage('./character/right.png'),
+          _loadImage('./character/down.png'),
+          _loadImage('./character/down_diagonal.png'),
+          _loadImage('./character/left.png'),
+        ])
+
+        const [
+          up,
+          upDiagonal,
+          right,
+          down,
+          downDiagonal,
+          left
+        ] = await imagesLoadPromise
+
+        _characterImages = {
+          up,
+          upDiagonal,
+          right,
+          down,
+          downDiagonal,
+          left
+        }
       }
 
       function _getCanvasContext() {
@@ -190,25 +229,33 @@
 
       function _handleArrowUp () {
         if (_isUserPressingCmdKey) {
-          _setUserPosition({ z: _userPosition.z + 1 })
+          // _setUserPosition({ z: _userPosition.z + 1 })
+          _characterDirection = 'upDiagonal'
+          _setUserPosition({ y: _userPosition.y + 1, x: _userPosition.x + 1 })
         } else {
+          _characterDirection = 'up'
           _setUserPosition({ y: _userPosition.y + 1 })
         }
       }
 
       function _handleArrowDown () {
         if (_isUserPressingCmdKey) {
-          _setUserPosition({ z: _userPosition.z - 1 })
+          // _setUserPosition({ z: _userPosition.z - 1 })
+          _characterDirection = 'downDiagonal'
+          _setUserPosition({ y: _userPosition.y - 1, x: _userPosition.x - 1 })
         } else {
+          _characterDirection = 'down'
           _setUserPosition({ y: _userPosition.y - 1 })
         }
       }
 
       function _handleArrowRight () {
+        _characterDirection = 'right'
         _setUserPosition({ x: _userPosition.x + 1 })
       }
 
       function _handleArrowLeft () {
+        _characterDirection = 'left'
         _setUserPosition({ x: _userPosition.x - 1 })
       }
 
@@ -220,6 +267,16 @@
         } else {
           _deleteBlockInUserPosition()
         }
+      }
+
+
+      function _fromSceneToCanvas ({ x, y, z }) {
+        const { Point } = Isomer
+
+        const scenePoint = new Point(x, y, z)
+        const canvasPoint = _isomer._translatePoint(scenePoint)
+
+        return canvasPoint
       }
 
       function _findBlockByCoordinates (blockCoordinates) {
@@ -313,26 +370,37 @@
 
         if (_showDebugBox) _renderDebugBBox ()
 
-        // _renderBlockPlane({
-        //   hOffset: 0,
-        //   vOffset: 0,
-        //   hBlocks: 5,
-        //   vBlocks: 2,
-        //   planeZ: 0
-        // })
+        _renderTilePlane({
+          hOffset: 0,
+          vOffset: 0,
+          hBlocks: _bbox.xSize,
+          vBlocks: _bbox.ySize,
+          planeZ: 0
+        })
 
-        _renderBlock(_userPosition)
+        // _renderBlock(_userPosition)
         _renderSavedBlocks()
 
-        if(_characterImage !== null) {
-          _ctx.drawImage(
-            _characterImage,
-            _userPosition.x * _BLOCK_SIZE,
-            _userPosition.y * _BLOCK_SIZE,
-            _characterImage.width,
-            _characterImage.height
-          );
-        }
+        _renderCharacter()
+      }
+
+      function _renderCharacter () {
+        const characterImage = _characterImages[_characterDirection]
+
+        const scenePosition = new Isomer.Point(
+          (_userPosition.x * _BLOCK_SIZE),
+          (_userPosition.y * _BLOCK_SIZE),
+          (_userPosition.z * _BLOCK_SIZE) + _BLOCK_SIZE / 2
+        )
+        const canvasPosition = _fromSceneToCanvas(scenePosition)
+
+        _ctx.drawImage(
+          characterImage,
+          canvasPosition.x - characterImage.width/2,
+          canvasPosition.y - characterImage.height,
+          characterImage.width,
+          characterImage.height
+        );
       }
 
       function _renderBackground() {
@@ -522,6 +590,19 @@
         }
       }
 
+
+      function _renderTilePlane ({ hOffset, vOffset, hBlocks, vBlocks, planeZ }) {
+        for (let x = hBlocks ; x >= 0 ; x--) {
+          for (let y = vBlocks ; y >= 0 ; y--) {
+            _renderTile({
+              x: x + hOffset,
+              y: y + hOffset,
+              z: planeZ
+            })
+          }
+        }
+      }
+
       function _renderSavedBlocks () {
         for (const blockPosition of _savedBlocks ) {
           _renderBlock({
@@ -553,6 +634,30 @@
 
         _isomer.add(shape, color)
       }
+
+      function _renderTile ({ x, y, z, color = _COLOR_MARBLE}) {
+        const { Point, Shape , Path} = Isomer
+
+        const sceneX = x * _BLOCK_SIZE
+        const sceneY = y * _BLOCK_SIZE
+        const sceneZ = z * _BLOCK_SIZE
+
+        const renderPoint = new Point(
+          sceneX,
+          sceneY,
+          sceneZ
+        )
+          
+        const tileShape = Shape.Prism(
+          renderPoint,
+          _BLOCK_SIZE,
+          _BLOCK_SIZE,
+          _BLOCK_SIZE / 8
+        )
+
+        _isomer.add(tileShape, color)
+      }
+
 
       function _renderXProjection ({ x, y, z, color}) {
         const { Point, Shape } = Isomer
